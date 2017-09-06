@@ -267,6 +267,79 @@ namespace dlib
 
     // ----------------------------------------------------------------------------------------
 
+        void multiply_zero_padded (
+            bool add_to,
+            tensor& dest,
+            const tensor& src1,
+            const tensor& src2
+        )
+        {
+            auto d = dest.host();
+            auto s1 = src1.host();
+            auto s2 = src2.host();
+
+            // Do the simple and fast version if everything has the same dimensions
+            if (have_same_dimensions(dest, src1) &&
+                have_same_dimensions(dest, src2))
+            {
+                if (add_to)
+                {
+                    for (size_t i = 0; i < dest.size(); ++i)
+                        d[i] += s1[i] * s2[i];
+                }
+                else
+                {
+                    for (size_t i = 0; i < dest.size(); ++i)
+                        d[i] = s1[i] * s2[i];
+                }
+                return;
+            }
+
+            // Otherwise, do the more complex version with bounds checking.
+            for (long n = 0; n < dest.num_samples(); ++n)
+            {
+                for (long k = 0; k < dest.k(); ++k)
+                {
+                    for (long r = 0; r < dest.nr(); ++r)
+                    {
+                        for (long c = 0; c < dest.nc(); ++c)
+                        {
+                            float v1 = 0;
+                            float v2 = 0;
+
+                            // if this index is inside src1
+                            if (n < src1.num_samples() && 
+                                k < src1.k() && 
+                                r < src1.nr() && 
+                                c < src1.nc() )
+                            {
+                                const auto s_idx = ((n*src1.k() + k)*src1.nr() + r)*src1.nc() + c;
+                                v1 = s1[s_idx];
+                            }
+
+                            // if this index is inside src2
+                            if (n < src2.num_samples() && 
+                                k < src2.k() && 
+                                r < src2.nr() && 
+                                c < src2.nc() )
+                            {
+                                const auto s_idx = ((n*src2.k() + k)*src2.nr() + r)*src2.nc() + c;
+                                v2 = s2[s_idx];
+                            }
+
+                            if (add_to)
+                                *d += v1 * v2;
+                            else
+                                *d = v1 * v2;
+                            ++d;
+                        }
+                    }
+                }
+            }
+        }
+
+    // ----------------------------------------------------------------------------------------
+
         void assign_bias_gradient (
             tensor& grad,
             const tensor& gradient_input
@@ -1946,36 +2019,47 @@ namespace dlib
                 }
             }
         }
+
      // ------------------------------------------------------------------------------------
-    void copy_tensor(
+
+        void copy_tensor(
+            bool add_to,
             tensor& dest,
             size_t dest_k_offset,
             const tensor& src,
             size_t src_k_offset,
             size_t count_k
-    )
-    {
-        const size_t dest_sample_size = static_cast<size_t>(dest.nc() * dest.nr() * dest.k());
-        const size_t src_sample_size = static_cast<size_t>(src.nc() * src.nr() * src.k());
-
-        const size_t block_size = count_k * dest.nc() * dest.nr();
-
-        DLIB_CASSERT(dest.num_samples() == src.num_samples() &&
-                     dest.nc() == src.nc() && dest.nr() == src.nr(), "All sources should fit into dest tensor size");
-        DLIB_CASSERT(dest.k() - dest_k_offset >= count_k, "Not enough space in dest tensor");
-        DLIB_CASSERT(src.k() - src_k_offset >= count_k, "Not enough space in src tensor");
-
-        float* dest_p = dest.host() + dest_k_offset * dest.nc() * dest.nr();
-        const float* src_p = src.host() + src_k_offset * src.nc() * src.nr();
-
-        for (long i = 0; i < src.num_samples(); ++i)
+        )
         {
-            ::memcpy(dest_p, src_p, block_size * sizeof(float));
+            const size_t dest_sample_size = static_cast<size_t>(dest.nc() * dest.nr() * dest.k());
+            const size_t src_sample_size = static_cast<size_t>(src.nc() * src.nr() * src.k());
 
-            dest_p += dest_sample_size;
-            src_p  += src_sample_size;
+            const size_t block_size = count_k * dest.nc() * dest.nr();
+
+            DLIB_CASSERT(dest.num_samples() == src.num_samples() &&
+                dest.nc() == src.nc() && dest.nr() == src.nr(), "All sources should fit into dest tensor size");
+            DLIB_CASSERT(dest.k() - dest_k_offset >= count_k, "Not enough space in dest tensor");
+            DLIB_CASSERT(src.k() - src_k_offset >= count_k, "Not enough space in src tensor");
+
+            float* dest_p = dest.host() + dest_k_offset * dest.nc() * dest.nr();
+            const float* src_p = src.host() + src_k_offset * src.nc() * src.nr();
+
+            for (long i = 0; i < src.num_samples(); ++i)
+            {
+                if (add_to)
+                {
+                    for (size_t j = 0; j < block_size; ++j)
+                        dest_p[j] += src_p[j];
+                }
+                else
+                {
+                    ::memcpy(dest_p, src_p, block_size * sizeof(float));
+                }
+
+                dest_p += dest_sample_size;
+                src_p  += src_sample_size;
+            }
         }
-    }
 
     // ------------------------------------------------------------------------------------
     // ------------------------------------------------------------------------------------
